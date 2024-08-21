@@ -1,0 +1,557 @@
+---
+title: Supplementary Materials
+format: 
+  html: 
+    output-file: ePPA2024-poster-supp-mat.html
+    df-print: kable
+    code-fold: true
+    embed-resources: true
+knitr: 
+  opts_chunk: 
+    fig-path: "../../figures/ePPA2024-poster-supp_"
+    message: false
+---
+
+```{r}
+#| label: setup
+#| include: false
+#| echo: true
+library(ggplot2)
+library(patchwork)
+library(dplyr)
+library(tidyr)
+library(forcats)
+library(mice)
+library(here)
+devtools::load_all()
+```
+
+This document contains some extra bits of information to supplement the poster,
+as well as figures that just weren't good enough to make it onto the final version of the poster.
+
+::: {.callout collapse="true"}
+
+## R Session
+
+```{r}
+#| label: session-info
+#| code-fold: false
+print(sessionInfo(), locale = F)
+```
+
+:::
+
+## Retrieving data
+
+Download zip files from the Wellcome Osteological Research Database (website currently not accessible).
+
+Extract all files.
+
+```sh
+unzip "*.zip"
+```
+
+Rename files to .csv
+
+```sh
+for file in $(ls .) 
+    do
+        mv $file $file".csv"
+    done
+```
+
+## Importing data to R
+
+Import all datasets containing relevant dental data into R using DuckDB.
+
+```r
+con <- dbConnect(duckdb::duckdb(), dbdir = ":memory:")
+dental_inventory <- dbGetQuery(con, "SELECT * FROM read_csv('<path/to/folder>/*bones_present.lst.csv', delim = '|')")
+dental_pathology <- dbGetQuery(con, "SELECT * FROM read_csv('<path/to/folder>/*dental_path.lst.csv', delim = '|')")
+```
+
+Total sample size: `r nrow(distinct(dental_inventory, ID))`
+
+## Filtering dataset
+
+Filtering the dataset to include adult individuals with permanent dentition only. It was also necessary to combine `SITECODE`
+(the code for the archaeological site) and `CONTEXT`
+(the unique identifier for individuals within each site), as `CONTEXT`
+was not unique for individuals across all sites. This was done by
+combining `SITECODE` and `CONTEXT`: `ID` = `SITECODE_CONTEXT`.
+
+```{r}
+#| eval: false
+dental_inventory |>
+  filter(
+    BONE_GP == "Permanent teeth",  # only dental data
+    str_detect(AGE, "SUB-ADULT", negate = T) # only adults
+  ) |>
+  separate_wider_delim(
+    BONES_PRESENT,
+    delim = " ",
+    names = c("region", "side", "type")
+  ) |>
+  mutate(
+    region = case_match(
+      region,
+      "Maxilla" ~ "U",
+      "Mandible" ~ "L"
+    ),
+    tooth = paste0(region, side, type),
+    tooth = case_when(
+      stringr::str_detect(tooth, "C$") ~ paste0(tooth, "1"), # add 1 to canine notation (e.g. ULC -> ULC1)
+      TRUE ~ tooth
+    )
+  ) |>
+    # create a unique identifier (some CONTEXT is repeated across sites)
+  mutate(ID = paste0(SITECODE, "_", CONTEXT)) |>
+  select(ID, tooth)
+```
+
+Sample sizes were calculated for the following samples:
+
+adult individuals with complete dentitions (incl. M3s),
+
+```{r}
+# including M3s
+
+dental_inventory_long |>
+  group_by(ID) |>
+  summarise(n_teeth = sum(presence)) |>
+  filter(n_teeth == 32) |>
+  nrow() # 567
+```
+
+adult individuals with complete dentitions AND all teeth scored for LEH
+lesions (incl. M3s),
+
+```{r}
+hypoplasia_long |>
+  group_by(ID) |>
+  summarise(leh_scores = sum(can_score)) |>
+  filter(leh_scores == 32) |>
+  nrow() # 12
+```
+
+and Adult individuals with complete dentitions AND all teeth scored
+for LEH lesions AND LEH lesion present on at least one tooth (incl. M3s).
+
+```{r}
+hypoplasia_long |>
+  group_by(ID) |>
+  summarise(
+    leh_scores = sum(can_score),
+    leh_bin = sum(leh_bin),
+  ) |>
+  filter(leh_scores == 32) |>
+  filter(leh_bin > 0) |>
+  nrow() # 7
+```
+
+The same counts as above, but excluding M3s. 
+
+Adult individuals with complete dentitions (excl. M3s),
+
+```{r}
+dental_inventory_long |>
+  filter(!stringi::stri_detect(tooth, regex = "M3$")) |>
+  group_by(ID) |>
+  summarise(n_teeth = sum(presence)) |>
+  filter(n_teeth == 28) |>
+  nrow() # 708
+```
+
+adult individuals with complete dentitions AND all teeth scored for LEH
+lesions (incl. M3s),
+
+```{r}
+hypoplasia_long |>
+  filter(!stringi::stri_detect(tooth, regex = "M3$")) |>
+  group_by(ID) |>
+  summarise(leh_scores = sum(can_score)) |>
+  filter(leh_scores == 28) |>
+  nrow() # 25
+```
+
+and adult individuals with complete dentitions AND all teeth scored
+for LEH lesions AND LEH lesion present on at least one tooth (incl. M3s).
+
+```{r}
+hypoplasia_long |>
+  filter(!stringi::stri_detect(tooth, regex = "M3$")) |>
+  group_by(ID) |>
+  summarise(
+    leh_scores = sum(can_score),
+    leh_bin = sum(leh_bin),
+  ) |>
+  filter(leh_scores == 28) |>
+  filter(leh_bin > 0) |>
+  nrow() # 16
+```
+
+Still not ideal sample sizes, but definitely an improvement over samples with M3s.
+
+## Demographics
+
+Sex and age distributions included for context. Given the low
+samples size of the LEH-positive sample, there was no sense in
+doing any analysis on sex and age.
+
+```{r}
+#| label: tbl-demographics-full
+#| tbl-cap: Demographics for the full sample (n = 1418).
+
+hypoplasia_long |>
+  left_join(demography) |>
+  distinct(ID, .keep_all = T) |>
+  group_by(SEX, AGE) |>
+  count(SEX, AGE) # |> _$n |> sum() # for sample size
+```
+
+```{r}
+#| label: tbl-demographics-positive
+#| tbl-cap: Demographics for the LEH-positive sample (n = 16).
+
+hypoplasia_present_long |>
+  left_join(demography) |>
+  distinct(ID, .keep_all = T) |>
+  group_by(SEX, AGE) |>
+  count(SEX, AGE) # |> _$n |> sum() # for sample size
+```
+
+Figures, in case you don't like tables.
+
+```{r}
+#| label: fig-demographics-sex
+#| fig-cap: Distribution of sex in the full sample (charcoal; n = 1418) and the LEH-positive sample (blue; n = 16). Y-axis is cut off at 400 to be able to see the LEH-positive counts.
+# needs to be proportions?
+hypoplasia_long |>
+  left_join(demography) |>
+  distinct(ID, .keep_all = T) |>
+  mutate(leh_present = as_factor(leh_present)) |>
+  ggplot(aes(x = SEX)) +
+    geom_bar(position = "dodge") +
+    # overlay lesions present sample
+    geom_bar(data = distinct(left_join(hypoplasia_present_long, demography), ID, .keep_all = T), aes(x = SEX), fill = "blue") +
+    coord_cartesian(ylim = c(0,400)) # cut y-axis off at 400
+```
+
+```{r}
+#| label: fig-demographics-age
+#| fig-cap: Distribution of age in the full sample (charcoal; n = 1418) and the LEH-positive sample (blue; n = 16). Y-axis is cut off at 400 to be able to see the LEH-positive counts.
+# needs to be proportions?
+hypoplasia_long |>
+  left_join(demography) |>
+  distinct(ID, .keep_all = T) |>
+  mutate(leh_present = as_factor(leh_present)) |>
+  ggplot(aes(x = AGE)) +
+    geom_bar(position = "dodge") +
+    # overlay lesions present sample
+    geom_bar(data = distinct(left_join(hypoplasia_present_long, demography), ID, .keep_all = T), aes(x = AGE), fill = "blue") +
+    coord_cartesian(ylim = c(0,400)) # cut y-axis off at 400
+```
+
+## Key Results
+
+Most of the analysis was done on the 16 individuals that have
+complete LEH scores in all teeth
+(except M3s), AND have at least one LEH lesion present (LEH-positive).
+The nine other individuals with complete scores but without
+any lesions are not useful in this analysis.
+
+
+### (Missing) Data patterns
+
+Adults with permanent dentition (excl. M3s) that were scored for LEH.
+
+```{r}
+nrow(distinct(hypoplasia_data, ID)) # number of individuals
+na_pattern <- md.pattern(hypoplasia_data[,-1], plot = F)
+nrow(na_pattern) - 1 # number of patterns
+```
+
+Adults with a complete permanent dentition missing that were
+scored for LEH.
+
+```{r}
+# can_score
+nrow(distinct(hypoplasia_complete_wide, ID)) # number of individuals
+leh_na_pattern <- md.pattern(hypoplasia_complete_wide[,-1], plot = F)
+nrow(leh_na_pattern) - 1 # number of patterns
+```
+
+Before plotting missing data per individual, individuals with all teeth present
+and endentulous individuals were removed since they are not interesting
+(the former have no missing data and the later have only missing data).
+Then individuals were arranged by number of teeth,
+
+```{r}
+# number missing teeth per individual (to order heatmaps)
+missing_ordered <- dental_inventory_long |>
+  #mutate(presence = presence) |>
+  group_by(ID) |>
+  filter(type != "m3") |>
+  summarise(n_teeth = sum(as.numeric(presence))) |>
+  filter(
+    n_teeth != 28 &
+      n_teeth != 0 # endentulous and full dentitions are not informative
+  ) |>
+  arrange(desc(n_teeth))
+
+dental_inventory_long <- dental_inventory_long |>
+  mutate(presence = as_factor(presence))
+```
+
+and plotted, with maxillary and mandibular teeth displayed in separate plots.
+
+```{r}
+#| label: fig-heatmap-inventory
+#| fig-cap: "Heat Map of present and missing teeth for all adults with permanent dentition (n = 1650). Maxillary (top) and mandibular (bottom) teeth arranged according to position in the mouth."
+
+max_inventory_heat <- dental_inventory_long |>
+  filter(
+    region == "maxilla",
+    ID %in% missing_ordered$ID
+  ) |>
+  mutate(ID = factor(ID, levels = missing_ordered$ID)) |>
+  ggplot(aes(x = tooth, y = ID, fill = presence)) +
+  geom_tile() +
+  scale_x_discrete(position = "top", guide = guide_axis(angle = 45)) +
+  theme(
+    #axis.text.x.top = element_text(angle = 45, hjust = 0, vjust = 0),
+    axis.text.y = element_blank(),
+    axis.title.x = element_blank()
+  )
+
+man_inventory_heat <- dental_inventory_long |>
+  filter(
+    region == "mandible",
+    ID %in% missing_ordered$ID
+  ) |>
+  mutate(ID = factor(ID, levels = missing_ordered$ID)) |>
+  ggplot(aes(x = tooth, y = ID, fill = presence)) +
+  geom_tile() +
+  scale_x_discrete(position = "bottom", guide = guide_axis(angle = 45)) +
+  theme(
+    #axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1),
+    axis.text.y = element_blank()
+  )
+
+(max_inventory_heat / man_inventory_heat) + 
+  plot_layout(guides = "collect", axis_titles = "collect") &
+  labs(x = "Tooth", y = "Individuals", fill = "Presence") &
+  scale_fill_viridis_d(option = "viridis", begin = 0.1)
+```
+
+The same was done for hypoplasia scores. If a tooth could be scored, it received a score of 1,
+if not, it received a score of 0.
+
+```{r}
+scoreable_ordered <- hypoplasia_complete_long |>
+  group_by(ID) |>
+  filter(type != "m3") |>
+  summarise(n_teeth = sum(as.numeric(can_score))) |>
+  filter(
+    n_teeth != 28 &
+      n_teeth != 0 # endentulous and full dentitions are not informative
+  ) |>
+  arrange(desc(n_teeth))
+```
+
+Then separate heatmaps were made for maxillary and mandibular teeth.
+
+```{r}
+#| label: fig-heatmap-scoreable
+#| fig-cap: "Heat Map of whether teeth could be scored for hypoplasia in the full sample (n = 1418). Maxillary (top) and mandibular (bottom) teeth arranged according to position in the mouth."
+max_scoreable_heat <- hypoplasia_complete_long |>
+  filter(
+    region == "maxilla",
+    ID %in% scoreable_ordered$ID
+  ) |>
+  mutate(ID = factor(ID, levels = scoreable_ordered$ID)) |>
+  ggplot(aes(x = tooth, y = ID, fill = as_factor(can_score))) +
+  geom_tile() +
+  scale_x_discrete(position = "top", guide = guide_axis(angle = 45)) +
+  theme(
+    #axis.text.x.top = element_text(angle = 45, hjust = 0, vjust = 0),
+    axis.text.y = element_blank(),
+    axis.title.x = element_blank()
+  )
+
+man_scoreable_heat <- hypoplasia_complete_long |>
+  filter(
+    region == "mandible",
+    ID %in% scoreable_ordered$ID
+  ) |>
+  mutate(ID = factor(ID, levels = scoreable_ordered$ID)) |>
+  ggplot(aes(x = tooth, y = ID, fill = as_factor(can_score))) +
+  geom_tile() +
+  scale_x_discrete(guide = guide_axis(angle = 45)) +
+  theme(
+    #axis.text.x.top = element_text(angle = 45, hjust = 0, vjust = 0),
+    axis.text.y = element_blank(),
+    #axis.title.x = element_blank()
+  )
+
+(max_scoreable_heat / man_scoreable_heat) + 
+  plot_layout(guides = "collect", axis_titles = "collect") &
+  labs(x = "Tooth", y = "Individuals", fill = "Scoreable") &
+  scale_fill_viridis_d(option = "viridis", begin = 0.1)
+```
+
+
+### LEH lesion patterns
+
+To explore patterns of
+the presence and absence of LEH using the `mice` package, scores of 0,
+i.e. absence of a lesion, were converted to `NA`.
+
+```{r}
+#| eval: false
+hypoplasia_present_wide <- hypoplasia_present_long |>
+  select(ID, tooth, score) |>
+  mutate(score = if_else(score == 0, NA, 1)) |>
+  pivot_wider(names_from = "tooth", values_from = "score")
+```
+
+This allowed us to use the missing data functions on the hypoplasia scores to explore score patterns,
+which was done on the LEH-positive sample (n = 16).
+
+
+```{r}
+#| label: fig-leh-mdpattern
+#| fig-cap: "Pattern of scores in the LEH-positive sample. Each row represents a different pattern of scores. Row names is the number of times the pattern occurs in the sample."
+leh_score_pattern <- md.pattern(hypoplasia_present_wide[,-1])
+```
+
+Number of patterns: `r nrow(leh_score_pattern) - 1`
+
+Number of insults per tooth, tooth type, and tooth class in the
+LEH-positive sample. Calculated as the number of affected teeth
+divided by the number of teeth present in the sample.
+
+```{r}
+#| label: tbl-hypoplasia-ratios
+#| tbl-cap: Ratios of LEH per tooth, tooth type, and tooth class, respectively, in the LEH-positive sample.
+#| tbl-subcap: 
+#|   - Ratio per tooth
+#|   - Ratio per tooth type
+#|   - Ratio per tooth class
+# tooth
+hypoplasia_present_long |>
+  group_by(tooth) |>
+  summarise(
+    n = n(),
+    present = sum(leh_bin),
+    .groups = "keep"
+  ) |>
+  mutate(prop = present / n) |>
+  arrange(desc(prop))
+
+# tooth type
+hypoplasia_present_long |>
+  group_by(type) |>
+  summarise(
+    n = n(),
+    present = sum(leh_bin),
+    .groups = "keep"
+  ) |>
+  mutate(prop = present / n) |>
+  arrange(desc(prop))
+
+# tooth class
+hypoplasia_present_long |>
+  group_by(class) |>
+  summarise(
+    n = n(),
+    present = sum(leh_bin),
+    .groups = "keep"
+  ) |>
+  mutate(prop = present / n) |>
+  arrange(desc(prop))
+```
+
+
+
+```{r}
+# Convert scores of 0 to NA
+hypoplasia_present_na <- hypoplasia_present_wide |>
+  mutate(across(-ID, \(x) if_else(x == 0, NA, x)))
+
+score_pairs <- md.pairs(hypoplasia_present_na[,-1])
+```
+
+```{r}
+#| label: tbl-counts-presence
+#| tbl-cap: "Counts of teeth with an LEH 'present' score in the LEH-positive sample."
+score_pairs$rr |>
+  as_tibble(rownames = "tooth")
+```
+
+```{r}
+#| label: tbl-counts-absence
+#| tbl-cap: "Counts of teeth with an LEH 'absent' score in the LEH-positive sample."
+score_pairs$mm |>
+  as_tibble(rownames = "tooth")
+```
+
+
+(A)Symmetry in LEH insults.
+
+Symmetry was calculated as agreement between tooth isomeres and antimeres,
+i.e., if either both teeth (in an antimere or isomere pair) had a lesion or
+had no lesion, this was considered agreement.
+
+```{r}
+isomere_score_agreement <- hypoplasia_present_long |> # symmetry is not informative on individuals with no lesions
+  group_by(ID, side, type) |> # group by side to compare isomeres
+  summarise(
+    n = n(), # sanity check
+    score = sum(leh_bin)
+  ) |>
+  mutate(
+    agree = if_else(score == 1, FALSE, TRUE)
+  ) |>
+  ungroup()
+
+# antimere symmetry
+
+antimere_score_agreement <- hypoplasia_present_long |>
+  group_by(ID, region, type) |> # group by region to compare antimeres
+  summarise(
+    n = n(), # sanity check
+    score = sum(leh_bin)
+  ) |>
+  mutate(
+    agree = if_else(score == 1, FALSE, TRUE)
+  ) |>
+  ungroup()
+```
+
+Plots
+
+```{r}
+#| label: fig-antimere-isomere
+
+isomere_symm_plot <- isomere_score_agreement |>
+  ggplot(aes(x = type, y = ID, fill = agree)) +
+    geom_tile() +
+    labs(caption = "Isomere symmetry of lesions.")
+
+antimere_symm_plot <- antimere_score_agreement |>
+  ggplot(aes(x = type, y = ID, fill = agree)) +
+    geom_tile() +
+    labs(caption = "Antimere symmetry of lesions.") +
+    theme(
+      axis.text.y = element_blank(),
+      axis.ticks.y = element_blank()
+    )
+
+isomere_symm_plot + antimere_symm_plot + plot_layout(guides = "collect", axis_titles = "collect") & labs(x = "Tooth type", fill = "Agreement") & scale_fill_manual(labels = c("No", "Yes"), values = viridisLite::viridis(2, begin = 0.1, end = 0.7))
+```
+
+## References {.unnumbered}
+
+WORD, Museum of London. (2013). www.museumoflondon.org.uk/ Collections-Research/LAARC/Centre-for-Human-Bioarchaeology/
+Accessed April 2024.
