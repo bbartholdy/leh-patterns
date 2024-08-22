@@ -6,6 +6,8 @@ format:
     df-print: kable
     code-fold: true
     embed-resources: true
+  pdf: 
+    output-file: ePPA2024-poster-supp-mat.pdf
 knitr: 
   opts_chunk: 
     fig-path: "../../figures/ePPA2024-poster-supp_"
